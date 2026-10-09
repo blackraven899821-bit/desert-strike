@@ -1,0 +1,14 @@
+/* Shared production UDP transport, also exercised by test_network.c. */
+typedef struct {uint32_t magic,version,type,token,seq;Input in;} Request;
+typedef struct {uint32_t magic,version,type,token;int32_t id;World w;} Snapshot;
+_Static_assert(sizeof(Request)==40 && sizeof(Snapshot)==1064,"Protocol layout changed: bump version and update tests");
+static void stopNet(void){if(sock!=INVALID_SOCKET)closesocket(sock);sock=INVALID_SOCKET;clientToken=0;memset(tokens,0,sizeof(tokens));memset(inputs,0,sizeof(inputs));}
+static int openNet(int host){stopNet();sock=socket(AF_INET,SOCK_DGRAM,IPPROTO_UDP);if(sock==INVALID_SOCKET)return 0;u_long nonblock=1;if(ioctlsocket(sock,FIONBIO,&nonblock)==SOCKET_ERROR){stopNet();return 0;}struct sockaddr_in a;memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons(host?PORT:0);a.sin_addr.s_addr=htonl(INADDR_ANY);if(bind(sock,(struct sockaddr*)&a,sizeof(a))==SOCKET_ERROR){stopNet();return 0;}return 1;}
+static void sendRequest(int type,Input in){Request r;memset(&r,0,sizeof(r));r.magic=MAGIC;r.version=VERSION;r.type=type;r.token=clientToken;r.seq=++clientSeq;r.in=in;sendto(sock,(char*)&r,sizeof(r),0,(struct sockaddr*)&serverAddr,sizeof(serverAddr));}
+static void snapshotTo(int id,int type){Snapshot s;memset(&s,0,sizeof(s));s.magic=MAGIC;s.version=VERSION;s.type=type;s.token=tokens[id];s.id=id;s.w=world;sendto(sock,(char*)&s,sizeof(s),0,(struct sockaddr*)&peers[id],sizeof(peers[id]));}
+static void serverNetwork(double t){for(int count=0;count<128;count++){Request r;struct sockaddr_in from;int sz=sizeof(from);int n=recvfrom(sock,(char*)&r,sizeof(r),0,(struct sockaddr*)&from,&sz);if(n<0)break;if(n!=sizeof(r)||r.magic!=MAGIC||r.version!=VERSION)continue;int id=-1;for(int j=dedicated?0:1;j<16;j++)if(tokens[j]&&samePeer(&from,&peers[j])){id=j;break;}
+if(r.type==1){if(id<0){for(int j=dedicated?0:1;j<16;j++)if(!world.p[j].active){id=j;break;}if(id<0){Snapshot full;memset(&full,0,sizeof(full));full.magic=MAGIC;full.version=VERSION;full.type=4;full.id=-1;sendto(sock,(char*)&full,sizeof(full),0,(struct sockaddr*)&from,sizeof(from));continue;}peers[id]=from;tokens[id]=random32();sequences[id]=0;lastInput[id]=0;memset(&inputs[id],0,sizeof(Input));addPlayer(&world,id);}lastSeen[id]=t;snapshotTo(id,2);}
+else if(id>=0&&r.token==tokens[id]&&r.type==3&&(int32_t)(r.seq-sequences[id])>0){if(!isfinite(r.in.yaw)||!isfinite(r.in.pitch)||!isfinite(r.in.forward)||!isfinite(r.in.side))continue;sequences[id]=r.seq;inputs[id]=r.in;lastSeen[id]=lastInput[id]=t;}
+else if(id>=0&&r.token==tokens[id]&&r.type==5){world.p[id].active=0;tokens[id]=0;memset(&inputs[id],0,sizeof(Input));}}
+for(int j=dedicated?0:1;j<16;j++)if(tokens[j]){if(t-lastSeen[j]>10){world.p[j].active=0;tokens[j]=0;}else if(t-lastInput[j]>.25){inputs[j].forward=inputs[j].side=0;inputs[j].buttons=0;}}
+if(t>=netNext){netNext=t+1.0/30;for(int j=dedicated?0:1;j<16;j++)if(tokens[j])snapshotTo(j,2);}}

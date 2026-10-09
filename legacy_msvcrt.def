@@ -1,0 +1,19 @@
+LIBRARY msvcrt.dll
+EXPORTS
+_vsnprintf
+_vsnwprintf
+sin
+cos
+atan2
+sqrt
+floor
+fmod
+tan
+memcpy
+memset
+strlen
+strstr
+wcslen
+wcsrchr
+_wcsicmp
+abs
